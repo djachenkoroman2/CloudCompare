@@ -175,6 +175,9 @@ jobs:
                     $key.StartsWith("ext-ms-win-")) {
                   continue
                 }
+                if (Test-Path (Join-Path $env:WINDIR "System32\$dll")) {
+                  continue
+                }
 
                 $candidate = $null
                 foreach ($dir in $searchDirs) {
