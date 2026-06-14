@@ -227,11 +227,14 @@ jobs:
           $ErrorActionPreference = "Stop"
           $app = Join-Path $env:GITHUB_WORKSPACE "portable\CloudCompare"
           $script = Join-Path $env:GITHUB_WORKSPACE "python-runtime-smoke.py"
+          $runner = Join-Path $env:GITHUB_WORKSPACE "python-runtime-smoke-runner.py"
           $marker = Join-Path $env:GITHUB_WORKSPACE "python-runtime-smoke.ok"
           Remove-Item Env:CONDA_PREFIX -ErrorAction SilentlyContinue
           Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue
           Remove-Item Env:PYTHONHOME -ErrorAction SilentlyContinue
           Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
+          $env:CC_CLOUDCOMPARE_EXE = Join-Path $app "CloudCompare.exe"
+          $env:CC_PYTHON_SMOKE_SCRIPT = $script
           $env:CC_PYTHON_SMOKE_MARKER = $marker
           @'
           import os
@@ -251,17 +254,40 @@ jobs:
           os._exit(0)
           '@ | Set-Content -Encoding ascii $script
 
-          $process = Start-Process `
-            -FilePath "$app\CloudCompare.exe" `
-            -ArgumentList @("-SILENT", "-AUTO_SAVE", "OFF", "-PYTHON_SCRIPT", $script) `
-            -WorkingDirectory $app `
-            -PassThru
-          if (!$process.WaitForExit(60000)) {
-            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-            throw "CloudCompare smoke test timed out"
-          }
-          if ($process.ExitCode -ne 0) {
-            throw "CloudCompare smoke test failed with exit code $($process.ExitCode)"
+          @'
+          import os
+          import subprocess
+          import sys
+
+          command = [
+              os.environ["CC_CLOUDCOMPARE_EXE"],
+              "-SILENT",
+              "-AUTO_SAVE",
+              "OFF",
+              "-PYTHON_SCRIPT",
+              os.environ["CC_PYTHON_SMOKE_SCRIPT"],
+          ]
+          try:
+              result = subprocess.run(
+                  command,
+                  cwd=os.path.dirname(command[0]),
+                  capture_output=True,
+                  text=True,
+                  timeout=60,
+              )
+          except subprocess.TimeoutExpired as error:
+              print(error.stdout or "")
+              print(error.stderr or "", file=sys.stderr)
+              raise
+
+          print(result.stdout)
+          print(result.stderr, file=sys.stderr)
+          raise SystemExit(result.returncode)
+          '@ | Set-Content -Encoding ascii $runner
+
+          & "$env:GITHUB_WORKSPACE\python-runtime\Scripts\python.exe" $runner
+          if ($LASTEXITCODE -ne 0) {
+            throw "CloudCompare smoke test failed with exit code $LASTEXITCODE"
           }
           if (!(Test-Path $marker)) {
             throw "PythonRuntime smoke marker file was not produced"
@@ -269,6 +295,7 @@ jobs:
           Get-Content $marker | Write-Host
 
       - name: Create portable ZIP
+        if: ${{ always() }}
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -292,6 +319,7 @@ jobs:
           Pop-Location
 
       - name: Upload portable archive
+        if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
           name: CloudCompare-Windows-x64-Portable-PythonRuntime
