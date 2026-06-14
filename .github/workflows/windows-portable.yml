@@ -122,6 +122,7 @@ jobs:
             "msvcp140_1.dll",
             "msvcp140_2.dll",
             "msvcp140_atomic_wait.dll",
+            "vcomp140.dll",
             "vcruntime140.dll",
             "vcruntime140_1.dll"
           )
@@ -130,6 +131,7 @@ jobs:
               continue
             }
             $candidate = Get-ChildItem $env:VCToolsRedistDir -Recurse -Filter $dll -ErrorAction SilentlyContinue |
+              Where-Object { $_.FullName -match '\\x64\\' } |
               Select-Object -First 1
             if ($candidate) {
               Copy-Item $candidate.FullName $app
@@ -310,6 +312,7 @@ jobs:
             "Python: 3.12"
           )
           $manifest | Set-Content -Encoding ascii portable\CloudCompare\BUILD-INFO.txt
+          Remove-Item portable\CloudCompare\plugins\Python\python3.exe -Force -ErrorAction SilentlyContinue
 
           Push-Location portable
           7z a -tzip "$artifactDir\CloudCompare-Windows-x64-Portable-PythonRuntime.zip" CloudCompare
