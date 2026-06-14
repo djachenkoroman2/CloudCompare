@@ -246,11 +246,13 @@ jobs:
           )
           '@ | Set-Content -Encoding ascii $script
 
-          $output = & "$app\CloudCompare.exe" -SILENT -AUTO_SAVE OFF -PYTHON_SCRIPT $script 2>&1
-          $exitCode = $LASTEXITCODE
-          $output | Write-Host
-          if ($exitCode -ne 0) {
-            throw "CloudCompare smoke test failed with exit code $exitCode"
+          $process = Start-Process `
+            -FilePath "$app\CloudCompare.exe" `
+            -ArgumentList @("-SILENT", "-AUTO_SAVE", "OFF", "-PYTHON_SCRIPT", $script) `
+            -Wait `
+            -PassThru
+          if ($process.ExitCode -ne 0) {
+            throw "CloudCompare smoke test failed with exit code $($process.ExitCode)"
           }
           if (!(Test-Path $marker)) {
             throw "PythonRuntime smoke marker file was not produced"
