@@ -228,6 +228,10 @@ jobs:
           $app = Join-Path $env:GITHUB_WORKSPACE "portable\CloudCompare"
           $script = Join-Path $env:GITHUB_WORKSPACE "python-runtime-smoke.py"
           $marker = Join-Path $env:GITHUB_WORKSPACE "python-runtime-smoke.ok"
+          Remove-Item Env:CONDA_PREFIX -ErrorAction SilentlyContinue
+          Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue
+          Remove-Item Env:PYTHONHOME -ErrorAction SilentlyContinue
+          Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
           $env:CC_PYTHON_SMOKE_MARKER = $marker
           @'
           import os
