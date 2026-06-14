@@ -227,8 +227,12 @@ jobs:
           $ErrorActionPreference = "Stop"
           $app = Join-Path $env:GITHUB_WORKSPACE "portable\CloudCompare"
           $script = Join-Path $env:GITHUB_WORKSPACE "python-runtime-smoke.py"
-          $log = Join-Path $env:GITHUB_WORKSPACE "python-runtime-smoke.log"
+          $marker = Join-Path $env:GITHUB_WORKSPACE "python-runtime-smoke.ok"
+          $env:CC_PYTHON_SMOKE_MARKER = $marker
           @'
+          import os
+          from pathlib import Path
+
           import cccorelib
           import numpy
           import pycc
@@ -236,24 +240,22 @@ jobs:
           cloud = cccorelib.PointCloud()
           assert cloud.size() == 0
           assert pycc.GetCmdLineInstance() is not None
-          print("WINDOWS_PYTHON_RUNTIME_OK", numpy.__version__)
+          Path(os.environ["CC_PYTHON_SMOKE_MARKER"]).write_text(
+              f"WINDOWS_PYTHON_RUNTIME_OK {numpy.__version__}\n",
+              encoding="ascii",
+          )
           '@ | Set-Content -Encoding ascii $script
 
-          $output = & "$app\CloudCompare.exe" -SILENT -LOG_FILE $log -AUTO_SAVE OFF -PYTHON_SCRIPT $script 2>&1
+          $output = & "$app\CloudCompare.exe" -SILENT -AUTO_SAVE OFF -PYTHON_SCRIPT $script 2>&1
           $exitCode = $LASTEXITCODE
           $output | Write-Host
-          if (Test-Path $log) {
-            $logOutput = Get-Content -Raw $log
-            $logOutput | Write-Host
-          } else {
-            $logOutput = ""
-          }
           if ($exitCode -ne 0) {
             throw "CloudCompare smoke test failed with exit code $exitCode"
           }
-          if ((($output -join "`n") + "`n" + $logOutput) -notmatch "WINDOWS_PYTHON_RUNTIME_OK") {
-            throw "PythonRuntime smoke marker was not produced"
+          if (!(Test-Path $marker)) {
+            throw "PythonRuntime smoke marker file was not produced"
           }
+          Get-Content $marker | Write-Host
 
       - name: Create portable ZIP
         shell: pwsh
