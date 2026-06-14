@@ -141,6 +141,11 @@ jobs:
             (Join-Path $env:CONDA_PREFIX "Library\bin"),
             (Join-Path $env:GITHUB_WORKSPACE "python-runtime\Scripts")
           )
+          $recursiveSearchDirs = @(
+            $env:CONDA_PREFIX,
+            (Join-Path $env:GITHUB_WORKSPACE "build"),
+            (Join-Path $env:GITHUB_WORKSPACE "python-runtime")
+          )
           $systemDlls = @(
             "advapi32.dll", "bcrypt.dll", "cfgmgr32.dll", "combase.dll",
             "comdlg32.dll", "crypt32.dll", "dwmapi.dll", "dxgi.dll",
@@ -185,6 +190,15 @@ jobs:
                   if (Test-Path $path) {
                     $candidate = $path
                     break
+                  }
+                }
+                if (!$candidate) {
+                  foreach ($dir in $recursiveSearchDirs) {
+                    $candidate = Get-ChildItem $dir -Recurse -File -Filter $dll -ErrorAction SilentlyContinue |
+                      Select-Object -First 1 -ExpandProperty FullName
+                    if ($candidate) {
+                      break
+                    }
                   }
                 }
                 if (!$candidate) {
