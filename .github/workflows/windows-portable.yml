@@ -248,13 +248,18 @@ jobs:
               f"WINDOWS_PYTHON_RUNTIME_OK {numpy.__version__}\n",
               encoding="ascii",
           )
+          os._exit(0)
           '@ | Set-Content -Encoding ascii $script
 
           $process = Start-Process `
             -FilePath "$app\CloudCompare.exe" `
             -ArgumentList @("-SILENT", "-AUTO_SAVE", "OFF", "-PYTHON_SCRIPT", $script) `
-            -Wait `
+            -WorkingDirectory $app `
             -PassThru
+          if (!$process.WaitForExit(60000)) {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            throw "CloudCompare smoke test timed out"
+          }
           if ($process.ExitCode -ne 0) {
             throw "CloudCompare smoke test failed with exit code $($process.ExitCode)"
           }
