@@ -143,7 +143,7 @@ jobs:
           )
           $recursiveSearchDirs = @(
             $env:CONDA_PREFIX,
-            (Join-Path $env:GITHUB_WORKSPACE "build"),
+            (Join-Path $env:GITHUB_WORKSPACE "build-windows-portable"),
             (Join-Path $env:GITHUB_WORKSPACE "python-runtime")
           )
           $systemDlls = @(
