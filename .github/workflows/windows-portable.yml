@@ -227,6 +227,7 @@ jobs:
           $ErrorActionPreference = "Stop"
           $app = Join-Path $env:GITHUB_WORKSPACE "portable\CloudCompare"
           $script = Join-Path $env:GITHUB_WORKSPACE "python-runtime-smoke.py"
+          $log = Join-Path $env:GITHUB_WORKSPACE "python-runtime-smoke.log"
           @'
           import cccorelib
           import numpy
@@ -238,12 +239,19 @@ jobs:
           print("WINDOWS_PYTHON_RUNTIME_OK", numpy.__version__)
           '@ | Set-Content -Encoding ascii $script
 
-          $output = & "$app\CloudCompare.exe" -SILENT -AUTO_SAVE OFF -PYTHON_SCRIPT $script 2>&1
+          $output = & "$app\CloudCompare.exe" -SILENT -LOG_FILE $log -AUTO_SAVE OFF -PYTHON_SCRIPT $script 2>&1
+          $exitCode = $LASTEXITCODE
           $output | Write-Host
-          if ($LASTEXITCODE -ne 0) {
-            throw "CloudCompare smoke test failed with exit code $LASTEXITCODE"
+          if (Test-Path $log) {
+            $logOutput = Get-Content -Raw $log
+            $logOutput | Write-Host
+          } else {
+            $logOutput = ""
           }
-          if (($output -join "`n") -notmatch "WINDOWS_PYTHON_RUNTIME_OK") {
+          if ($exitCode -ne 0) {
+            throw "CloudCompare smoke test failed with exit code $exitCode"
+          }
+          if ((($output -join "`n") + "`n" + $logOutput) -notmatch "WINDOWS_PYTHON_RUNTIME_OK") {
             throw "PythonRuntime smoke marker was not produced"
           }
 
