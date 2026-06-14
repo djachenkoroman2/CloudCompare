@@ -1,0 +1,269 @@
+name: Windows Portable
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - codex/windows-portable-python
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Windows x64 Portable
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout CloudCompare
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: Checkout PythonRuntime
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force plugins/private | Out-Null
+          git clone https://github.com/tmontaigu/CloudCompare-PythonRuntime.git plugins/private/CloudCompare-PythonRuntime
+          git -C plugins/private/CloudCompare-PythonRuntime checkout dd39f54e24b89b438b5a2e85fef5b191f7945f42
+
+      - name: Install C++ dependencies
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          architecture: x64
+          auto-activate: false
+          activate-environment: CloudCompareDev
+          environment-file: .ci/conda-win.yml
+          channels: conda-forge
+          conda-remove-defaults: "true"
+
+      - name: Install Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          architecture: x64
+
+      - name: Prepare PythonRuntime environment
+        shell: pwsh
+        run: |
+          python -m venv python-runtime
+          .\python-runtime\Scripts\python.exe -m pip install --upgrade pip
+          .\python-runtime\Scripts\python.exe -m pip install "numpy==2.2.*" "pybind11==3.0.1"
+
+      - name: Configure MSVC console
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Configure
+        shell: bash -el {0}
+        run: |
+          CONDA_LIB_DIR="$CONDA_PREFIX/Library"
+          EIGEN_ROOT_DIR="$CONDA_LIB_DIR/include/eigen3"
+          PYTHON_EXE="$(cygpath -m "$GITHUB_WORKSPACE/python-runtime/Scripts/python.exe")"
+          INSTALL_PREFIX="$(cygpath -m "$GITHUB_WORKSPACE/portable")"
+
+          cmake \
+            -S . \
+            -B build-windows-portable \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$INSTALL_PREFIX" \
+            -DCMAKE_PREFIX_PATH="$CONDA_LIB_DIR" \
+            -DEIGEN_ROOT_DIR="$EIGEN_ROOT_DIR" \
+            -DPython_EXECUTABLE="$PYTHON_EXE" \
+            -DOPTION_BUILD_CCVIEWER=OFF \
+            -DBUILD_TESTING=OFF \
+            -DPLUGIN_EXAMPLE_GL=OFF \
+            -DPLUGIN_EXAMPLE_IO=OFF \
+            -DPLUGIN_EXAMPLE_STANDARD=OFF \
+            -DPLUGIN_PYTHON=ON \
+            -DPLUGIN_PYTHON_COPY_ENV=ON \
+            -DPLUGIN_PYTHON_USE_EMBEDDED_MODULES=ON \
+            -DPLUGIN_GL_QEDL=ON \
+            -DPLUGIN_GL_QSSAO=ON \
+            -DPLUGIN_IO_QADDITIONAL=ON \
+            -DPLUGIN_IO_QCORE=ON \
+            -DPLUGIN_IO_QCSV_MATRIX=ON \
+            -DPLUGIN_IO_QPHOTOSCAN=ON \
+            -DPLUGIN_STANDARD_QBROOM=ON \
+            -DPLUGIN_STANDARD_QCANUPO=ON \
+            -DPLUGIN_STANDARD_QCLOUDLAYERS=ON \
+            -DPLUGIN_STANDARD_QCOLORIMETRIC_SEGMENTER=ON \
+            -DPLUGIN_STANDARD_QCOMPASS=ON \
+            -DPLUGIN_STANDARD_QCSF=ON \
+            -DPLUGIN_STANDARD_QFACETS=ON \
+            -DPLUGIN_STANDARD_QHPR=ON \
+            -DPLUGIN_STANDARD_QM3C2=ON \
+            -DPLUGIN_STANDARD_QMPLANE=ON \
+            -DPLUGIN_STANDARD_QPCV=ON \
+            -DPLUGIN_STANDARD_QPOISSON_RECON=ON \
+            -DPLUGIN_STANDARD_QRANSAC_SD=ON \
+            -DPLUGIN_STANDARD_QSRA=ON \
+            -DPLUGIN_STANDARD_QVOXFALL=ON
+
+      - name: Build and install
+        shell: bash -el {0}
+        run: |
+          cmake --build build-windows-portable --parallel 4
+          cmake --install build-windows-portable
+
+      - name: Complete portable runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $app = Join-Path $env:GITHUB_WORKSPACE "portable\CloudCompare"
+          $exe = Join-Path $app "CloudCompare.exe"
+          $windeployqt = Join-Path $env:CONDA_PREFIX "Library\bin\windeployqt.exe"
+
+          if (!(Test-Path $exe)) {
+            throw "CloudCompare.exe was not installed"
+          }
+
+          & $windeployqt $exe --release --compiler-runtime --no-quick-import --no-system-d3d-compiler --openglwidgets --concurrent
+          if ($LASTEXITCODE -ne 0) {
+            throw "windeployqt failed with exit code $LASTEXITCODE"
+          }
+
+          $runtimeDlls = @(
+            "concrt140.dll",
+            "msvcp140.dll",
+            "msvcp140_1.dll",
+            "msvcp140_2.dll",
+            "msvcp140_atomic_wait.dll",
+            "vcruntime140.dll",
+            "vcruntime140_1.dll"
+          )
+          foreach ($dll in $runtimeDlls) {
+            if (Test-Path (Join-Path $app $dll)) {
+              continue
+            }
+            $candidate = Get-ChildItem $env:VCToolsRedistDir -Recurse -Filter $dll -ErrorAction SilentlyContinue |
+              Select-Object -First 1
+            if ($candidate) {
+              Copy-Item $candidate.FullName $app
+            }
+          }
+
+          $searchDirs = @(
+            $app,
+            (Join-Path $env:CONDA_PREFIX "Library\bin"),
+            (Join-Path $env:GITHUB_WORKSPACE "python-runtime\Scripts")
+          )
+          $systemDlls = @(
+            "advapi32.dll", "bcrypt.dll", "cfgmgr32.dll", "combase.dll",
+            "comdlg32.dll", "crypt32.dll", "dwmapi.dll", "dxgi.dll",
+            "gdi32.dll", "imm32.dll", "iphlpapi.dll", "kernel32.dll",
+            "mpr.dll", "netapi32.dll", "ntdll.dll", "ole32.dll",
+            "oleaut32.dll", "opengl32.dll", "powrprof.dll", "rpcrt4.dll",
+            "secur32.dll", "setupapi.dll", "shell32.dll", "shlwapi.dll",
+            "user32.dll", "userenv.dll", "uxtheme.dll", "version.dll",
+            "winmm.dll", "winspool.drv", "ws2_32.dll", "wtsapi32.dll"
+          )
+
+          for ($pass = 0; $pass -lt 10; $pass++) {
+            $copied = $false
+            $packaged = @{}
+            Get-ChildItem $app -Recurse -File | ForEach-Object {
+              $packaged[$_.Name.ToLowerInvariant()] = $true
+            }
+
+            $binaries = Get-ChildItem $app -Recurse -File |
+              Where-Object { $_.Extension -in ".exe", ".dll", ".pyd" }
+            foreach ($binary in $binaries) {
+              $dependencies = & dumpbin.exe /nologo /dependents $binary.FullName 2>$null
+              foreach ($line in $dependencies) {
+                if ($line -notmatch '^\s+([A-Za-z0-9_.+-]+\.dll)\s*$') {
+                  continue
+                }
+                $dll = $Matches[1]
+                $key = $dll.ToLowerInvariant()
+                if ($packaged.ContainsKey($key) -or
+                    $systemDlls -contains $key -or
+                    $key.StartsWith("api-ms-win-") -or
+                    $key.StartsWith("ext-ms-win-")) {
+                  continue
+                }
+
+                $candidate = $null
+                foreach ($dir in $searchDirs) {
+                  $path = Join-Path $dir $dll
+                  if (Test-Path $path) {
+                    $candidate = $path
+                    break
+                  }
+                }
+                if (!$candidate) {
+                  $where = & where.exe $dll 2>$null | Select-Object -First 1
+                  if ($where -and $where -notmatch '\\Windows\\System32\\') {
+                    $candidate = $where
+                  }
+                }
+                if (!$candidate) {
+                  throw "Missing portable dependency $dll required by $($binary.FullName)"
+                }
+
+                Copy-Item $candidate $app
+                $packaged[$key] = $true
+                $copied = $true
+              }
+            }
+            if (!$copied) {
+              break
+            }
+          }
+
+      - name: Smoke test portable PythonRuntime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $app = Join-Path $env:GITHUB_WORKSPACE "portable\CloudCompare"
+          $script = Join-Path $env:GITHUB_WORKSPACE "python-runtime-smoke.py"
+          @'
+          import cccorelib
+          import numpy
+          import pycc
+
+          cloud = cccorelib.PointCloud()
+          assert cloud.size() == 0
+          assert pycc.GetCmdLineInstance() is not None
+          print("WINDOWS_PYTHON_RUNTIME_OK", numpy.__version__)
+          '@ | Set-Content -Encoding ascii $script
+
+          $output = & "$app\CloudCompare.exe" -SILENT -AUTO_SAVE OFF -PYTHON_SCRIPT $script 2>&1
+          $output | Write-Host
+          if ($LASTEXITCODE -ne 0) {
+            throw "CloudCompare smoke test failed with exit code $LASTEXITCODE"
+          }
+          if (($output -join "`n") -notmatch "WINDOWS_PYTHON_RUNTIME_OK") {
+            throw "PythonRuntime smoke marker was not produced"
+          }
+
+      - name: Create portable ZIP
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $artifactDir = Join-Path $env:GITHUB_WORKSPACE "artifacts"
+          New-Item -ItemType Directory -Force $artifactDir | Out-Null
+
+          $manifest = @(
+            "CloudCompare commit: $env:GITHUB_SHA",
+            "PythonRuntime commit: dd39f54e24b89b438b5a2e85fef5b191f7945f42",
+            "Architecture: x64",
+            "Build type: Release",
+            "Python: 3.12"
+          )
+          $manifest | Set-Content -Encoding ascii portable\CloudCompare\BUILD-INFO.txt
+
+          Push-Location portable
+          7z a -tzip "$artifactDir\CloudCompare-Windows-x64-Portable-PythonRuntime.zip" CloudCompare
+          if ($LASTEXITCODE -ne 0) {
+            throw "7z failed with exit code $LASTEXITCODE"
+          }
+          Pop-Location
+
+      - name: Upload portable archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: CloudCompare-Windows-x64-Portable-PythonRuntime
+          path: artifacts/CloudCompare-Windows-x64-Portable-PythonRuntime.zip
+          compression-level: 0
+          if-no-files-found: error
